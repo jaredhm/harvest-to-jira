@@ -1,0 +1,27 @@
+{
+  "name": "harvest-to-jira",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "pulls timelogging data from harvest and puts it in jira",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "babel-node ./index.js"
+  },
+  "author": "jrdmacfarlane@gmail.com",
+  "license": "ISC",
+  "volta": {
+    "node": "14.19.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.17.0",
+    "@babel/node": "^7.16.8",
+    "@babel/preset-env": "^7.16.11",
+    "babel-node": "0.0.1-security",
+    "dotenv": "^16.0.0",
+    "node-fetch": "^3.2.0"
+  },
+  "dependencies": {
+    "prompts": "^2.4.2"
+  }
+}
