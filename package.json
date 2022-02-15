@@ -18,7 +18,6 @@
     "@babel/node": "^7.16.8",
     "@babel/preset-env": "^7.16.11",
     "babel-node": "0.0.1-security",
-    "dotenv": "^16.0.0",
     "node-fetch": "^3.2.0"
   },
   "dependencies": {

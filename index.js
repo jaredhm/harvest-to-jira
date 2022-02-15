@@ -1,4 +1,3 @@
-import dotenv from 'dotenv'; 
 import { promises as fs, constants } from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
@@ -8,7 +7,6 @@ const MONDAY_INDEX = 1;
 const CONFIG_DIR = "config";
 const HARVEST_API_BASE_URL = "https://api.harvestapp.com";
 const HARVEST_LOG_STRING = "~~~ LOGGED TO JIRA ~~~";
-const JIRA_ISSUE_TYPE_EPIC = "Epic";
 
 const getHarvestHeaders = (config) => {
   if (!config.user?.harvestAccessToken || !config.user?.harvestAccountId) {
@@ -63,32 +61,36 @@ const getHarvestTimeEntries = async (
   return timeEntries;
 };
 
-const updateHarvestTimeEntry = async (
-  { id: harvestId, notes },
-  jiraWorkLog,
-  dryRun,
-  config
-) => {
-  const url = new URL(`/v2/time_entries/${harvestId}`, HARVEST_API_BASE_URL);
-  const requestBody = {
-    notes: `${notes}\n\n${HARVEST_LOG_STRING}\n${jiraWorkLog.self}` 
-  };
-
-  if (!dryRun) {
-    const response = await fetch(url, {
-      method: "PATCH",
-      headers: getHarvestHeaders(config),
-      body: JSON.stringify(requestBody)
-    });
-    if (!response.ok) {
-      console.error(`Cannot update Harvest time entry (${harvestId}) - ${response.statusText}`);
-      return;
-    }
-    console.log(`Successfully updated time entry in Harvest (${harvestId})`);
-  }
-
-  console.log(`Harvest PATCH request body for time entry (${harvestId}):\n${JSON.stringify(requestBody, undefined, 2)}`);
-}
+// TODO XXX - currently unused
+//
+// const updateHarvestTimeEntry = async (
+//   { id: harvestId, notes },
+//   jiraWorkLog,
+//   dryRun,
+//   config
+// ) => {
+//   const url = new URL(`/v2/time_entries/${harvestId}`, HARVEST_API_BASE_URL);
+//   const requestBody = {
+//     notes: `${notes}\n\n${HARVEST_LOG_STRING}\n${jiraWorkLog.self}` 
+//   };
+// 
+//   if (dryRun) {
+//     console.log(`Harvest PATCH request body for time entry (${harvestId}):\n${JSON.stringify(requestBody, undefined, 2)}`);
+//     return;
+//   }
+// 
+//   const response = await fetch(url, {
+//     method: "PATCH",
+//     headers: getHarvestHeaders(config),
+//     body: JSON.stringify(requestBody)
+//   });
+//   if (!response.ok) {
+//     console.error(`Cannot update Harvest time entry (${harvestId}) - ${response.statusText}`);
+//     console.log(await response.text());
+//     return;
+//   }
+//   console.log(`Successfully updated time entry in Harvest (${harvestId})`);
+// }
 
 const getJiraHeaders = (projectConfig) => {
   if (!projectConfig.atlassianAccountEmail || !projectConfig.atlassianApiToken) {
@@ -109,50 +111,39 @@ const getJiraHeaders = (projectConfig) => {
 }
 
 const getJiraIssue = async (
-  jiraKeyFromHarvest,
+  jiraKey,
   projectConfig,
-  logToEpic
 ) => {
-  let jiraIssue = null;
-  let jiraKey = jiraKeyFromHarvest;
-  do {
-    const url = new URL(
-      `/rest/api/3/issue/${jiraKey}`,
-      `https://${projectConfig.atlassianDomain}.atlassian.net`
-    );
-    const response = await fetch(url, {
-      method: "GET",
-      headers: getJiraHeaders(projectConfig) 
-    });
+  const url = new URL(
+    `/rest/api/3/issue/${jiraKey}`,
+    `https://${projectConfig.atlassianDomain}.atlassian.net`
+  );
+  const response = await fetch(url, {
+    method: "GET",
+    headers: getJiraHeaders(projectConfig) 
+  });
 
-    if (!response.ok) {
-      console.error(`Encountered error fetching Jira issue - ${response.statusText}`);
-    }
+  if (!response.ok) {
+    console.error(`Encountered error fetching Jira issue - ${response.statusText}`);
+    return null;
+  }
 
-    const data = await response.json();
+  return response.json();
+}
 
-    const issueType = data?.fields?.issuetype?.name;
-    if (!issueType) {
-      console.error(`Encountered error fetching Jira issue - could not find issue type for ${jiraKey}`);
-      return null;
-    }
-    if (logToEpic) {
-      if (issueType === JIRA_ISSUE_TYPE_EPIC) {
-        jiraIssue = data;
-      } else {
-        if (data.fields?.parent?.key) {
-          jiraKey = data.fields.parent.key;
-        } else {
-          console.log(`Found issue without epic - ${jiraKey} has no parent`)
-          jiraIssue = data;
-        }
-      }
-    } else {
-      jiraIssue = data;
-    }
-  } while (jiraIssue === null)
-
-  return jiraIssue;
+const getExistingWorkLog = (
+  jiraIssue,
+  harvestId
+) => {
+  const workLogs = jiraIssue.fields?.worklog?.worklogs || [];
+  // just awful
+  return workLogs.find((workLog) => {
+    return (workLog?.comment?.content || []).findIndex((paragraph) => {
+      return (paragraph?.content || []).findIndex((chunk) => {
+        return chunk?.text && chunk.text === `${harvestId}`;
+      }) > -1;
+    }) > -1;
+  });
 }
 
 const logTimeEntryToJira = async (
@@ -202,30 +193,29 @@ const logTimeEntryToJira = async (
     started: new Date(spent_date).toISOString().replace(/Z$/, "+0000")
   }
 
-  if (!dryRun) {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: getJiraHeaders(projectConfig),
-      body: JSON.stringify(requestBody)
-    });
-    if (!response.ok) {
-      console.error(`Logging Harvest time entry (${harvestId}) to Jira failed - ${response.statusText}`)
-      return null;
-    }
-    console.log(`Successfully logged time to ${jiraKey}`);
-    return response.json();
+  if (dryRun) {
+    console.log(`Jira POST body for Harvest time entry (${jiraKey}):\n${
+      JSON.stringify(requestBody, undefined, 2)
+    }`);
+    return null;
   }
 
-  console.log(`Jira POST body for Harvest time entry (${jiraKey}):\n${
-    JSON.stringify(requestBody, undefined, 2)
-  }`);
-  return null;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: getJiraHeaders(projectConfig),
+    body: JSON.stringify(requestBody)
+  });
+  if (!response.ok) {
+    console.error(`Logging Harvest time entry (${harvestId}) to Jira failed - ${response.statusText}`)
+    return null;
+  }
+  console.log(`Successfully logged time to ${jiraKey}`);
+  return response.json();
 }
 
 const logTimeEntriesToJira = async (
   timeEntries,
   config,
-  logToEpic,
   dryRun
 ) => {
   for (const entry of timeEntries) {
@@ -290,37 +280,42 @@ const logTimeEntriesToJira = async (
     }
 
     const jiraKey = matches[0];
-    const jiraIssue = await getJiraIssue(
-      jiraKey,
-      projectConfig,
-      logToEpic
-    );
+    const jiraIssue = await getJiraIssue(jiraKey, projectConfig);
 
     if (!jiraIssue) {
-      console.error(`Could not find ${logToEpic ? "epic" : "issue"} associated with ${jiraKey} - skipping`);
+      console.error(`Could not find issue associated with ${jiraKey} - skipping`);
       continue;
     }
 
-    const workLog = await logTimeEntryToJira(
-      jiraIssue.key,
-      entry,
-      projectConfig,
-      dryRun
-    );
-    if (workLog) {
-      await updateHarvestTimeEntry(
-        entry,
-        workLog,
-        dryRun,
-        config
-      );
+    let workLog = getExistingWorkLog(jiraIssue, harvestId);
+    if (!workLog) {
+     workLog = await logTimeEntryToJira(
+       jiraIssue.key,
+       entry,
+       projectConfig,
+       dryRun
+     );
+    } else {
+      console.log(`Found Harvest time entry already associated with ${jiraKey} - skipping Jira update`);
     }
+
+    console.log(`✅ Harvest time entry (${harvestId}) done`);
+
+    // TODO XXX - this will fail if the time sheet has been approved, which I have some
+    // but not all control over. I'd like to be able to connect time entry logs back to JIRA
+    // via Harvest, but that may not be doable right now
+    // if (workLog) {
+    //   await updateHarvestTimeEntry(
+    //     entry,
+    //     workLog,
+    //     dryRun,
+    //     config
+    //   );
+    // }
   }
 };
 
 (async () => {
-  dotenv.config();
-
   const mostRecentMonday = new Date();
   while (mostRecentMonday.getDay() !== MONDAY_INDEX) {
     mostRecentMonday.setDate(mostRecentMonday.getDate() - 1);
@@ -338,14 +333,6 @@ const logTimeEntriesToJira = async (
       initial: mostRecentMonday,
       mask: "dddd, MM/DD/YYYY",
       validate: date => date > Date.now() ? 'Cannot be in the future' : true
-    },
-    {
-      type: "toggle",
-      name: "logToEpic",
-      message: "Log to epic?",
-      initial: true,
-      active: "yes",
-      inactive: "no"
     },
     {
       type: "toggle",
@@ -395,7 +382,6 @@ const logTimeEntriesToJira = async (
   await logTimeEntriesToJira(
     timeEntries,
     configJson,
-    responses.logToEpic,
     responses.dryRun
   );
 })();
