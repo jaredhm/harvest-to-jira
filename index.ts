@@ -64,20 +64,30 @@ interface JiraUser {
   timeZone: string;
 }
 
+type TextContent = {
+  type: "text";
+  text: string;
+};
+type EmojiContent = {
+  type: "emoji";
+  attrs: {
+    shortName: string;
+    id: string;
+  };
+};
 // this API resource may actually be less sparse than
 // the interface suggests, but Jira REST can be unreliable
 type JiraWorkLog = Partial<{
+  timeSpentSeconds: number;
+  notifyUsers: boolean;
+  started: string;
   comment: Partial<{
+    version: 1;
     type: "doc";
     content: Array<
       Partial<{
         type: "paragraph";
-        content: Array<
-          Partial<{
-            type: "text";
-            text: string;
-          }>
-        >;
+        content: Array<Partial<TextContent> | Partial<EmojiContent>>;
       }>
     >;
   }>;
@@ -215,7 +225,7 @@ const hasExistingWorkLog = (
   const allComments = (jiraIssue.fields?.worklog?.worklogs ?? [])
     .flatMap((worklog) =>
       worklog.comment?.content?.flatMap((p) =>
-        p.content?.flatMap((t) => t.text)
+        p.content?.flatMap((t) => (t.type === "text" ? t.text : undefined))
       )
     )
     .filter(<T>(v: T | undefined): v is T => Boolean(v));
@@ -274,7 +284,7 @@ const logTimeEntryToJira = async (
     LocalTime.NOON,
     ZoneId.of(userTz)
   );
-  const requestBody = {
+  const requestBody: JiraWorkLog = {
     timeSpentSeconds: rounded_hours * 60 * 60,
     notifyUsers: false,
     comment: {
@@ -293,16 +303,7 @@ const logTimeEntryToJira = async (
             },
             {
               type: "text",
-              text: " Harvest time entry ID: ",
-            },
-            {
-              type: "text",
-              text: `${harvestId}`,
-              marks: [
-                {
-                  type: "code",
-                },
-              ],
+              text: `Harvest time entry ID: ${harvestId}`,
             },
           ],
         },
