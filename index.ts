@@ -393,15 +393,15 @@ const logTimeEntriesToJira = async (
       continue;
     }
 
-    let matches = [];
-    let match;
+    let matches = new Array<string>();
+    let match: RegExpMatchArray | null = null;
     const jiraKeyRegex = new RegExp(
       `(${projectConfig.jiraProjectKey}\\-[0-9]+)`,
       "g"
     );
     do {
       match = jiraKeyRegex.exec(notes ?? "");
-      if (match) {
+      if (match && match[0]) {
         matches.push(match[0]);
       }
     } while (match !== null);

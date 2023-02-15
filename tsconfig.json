@@ -18,5 +18,6 @@
     "strictNullChecks": true,
     "strictPropertyInitialization": true,
     "useUnknownInCatchVariables": true,
-  }
+  },
+  "exclude": ["node_modules"]
 }
