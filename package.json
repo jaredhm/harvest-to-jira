@@ -1,26 +1,33 @@
 {
   "name": "harvest-to-jira",
   "version": "1.0.0",
-  "type": "module",
   "description": "pulls timelogging data from harvest and puts it in jira",
-  "main": "index.js",
+  "main": "index.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "babel-node ./index.js"
+    "start": "ts-node ./index.ts",
+    "tc": "tsc **/*.ts",
+    "prettier": "prettier --config ./.prettierrc **/*.ts --write"
   },
   "author": "jrdmacfarlane@gmail.com",
   "license": "ISC",
   "volta": {
-    "node": "14.19.0"
+    "node": "16.19.0"
   },
   "devDependencies": {
-    "@babel/core": "^7.17.0",
-    "@babel/node": "^7.16.8",
-    "@babel/preset-env": "^7.16.11",
-    "babel-node": "0.0.1-security",
-    "node-fetch": "^3.2.0"
+    "@js-joda/core": "^5.5.2",
+    "@js-joda/timezone": "^2.17.2",
+    "@tsconfig/recommended": "^1.0.2",
+    "@types/node": "^18.13.0",
+    "@types/node-fetch": "^2.6.2",
+    "@types/prompts": "^2.4.2",
+    "node-fetch": "^2.6.9",
+    "prompts": "^2.4.2",
+    "ts-node": "^10.9.1",
+    "typescript": "^4.9.5"
   },
   "dependencies": {
-    "prompts": "^2.4.2"
+    "assert": "^2.0.0",
+    "prettier": "^2.8.4"
   }
 }

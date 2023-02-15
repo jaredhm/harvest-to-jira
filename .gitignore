@@ -1,5 +1,3 @@
-config/projects.json
+config
 
 node_modules
-
-.env
