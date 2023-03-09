@@ -429,6 +429,8 @@ const logTimeEntriesToJira = async (
     }
 
     const jiraKey = matches.length < 1 ? null : matches[0];
+
+    // Allows messages logged in a "DP-XXXX - this is a message" format.
     const jiraMessage = typeof jiraKey !== 'string' ? "" : notes?.replace(jiraKey + " - ", "").toString()!;
 
     if (!jiraKey) {
