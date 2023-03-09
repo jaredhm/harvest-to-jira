@@ -49,7 +49,6 @@ interface HarvestTimeEntry {
   id: number;
   is_closed: boolean;
   notes?: string;
-  worklog: string;
   project: {
     id: number;
     name: string;
