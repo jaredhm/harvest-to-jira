@@ -19,7 +19,9 @@ import assert from "assert";
 const CONFIG_DIR = "config";
 const HARVEST_API_BASE_URL = "https://api.harvestapp.com";
 const HARVEST_LOG_STRING = "~~~ LOGGED TO JIRA ~~~";
-const JIRA_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+const JIRA_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern(
+  "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
+);
 
 type UserConfig = Partial<{
   harvestUserId: number;
@@ -31,6 +33,7 @@ type ProjectConfig = Partial<{
   harvestId: number;
   jiraProjectKey: string;
   atlassianDomain: string;
+
   atlassianApiToken: string;
   atlassianAccountEmail: string;
 }>;
@@ -440,9 +443,7 @@ const logTimeEntriesToJira = async (
       );
     }
 
-    console.log(
-      `✅ Harvest time entry (${harvestId}) done`
-    );
+    console.log(`✅ Harvest time entry (${harvestId}) done`);
   }
 };
 
