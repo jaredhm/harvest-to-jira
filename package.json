@@ -6,9 +6,10 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "ts-node ./index.ts",
-    "tsc": "tsc --noEmit",
-    "prettier": "prettier --config ./.prettierrc **/*.ts --write",
-    "lint": "npm run tsc && npm run prettier"
+    "tc": "tsc --noEmit",
+    "prettier-write": "prettier --config ./.prettierrc **/*.ts --write",
+    "prettier-check": "prettier --check --config ./.prettierrc **/*.ts",
+    "lint": "npm run tc && npm run prettier-check"
   },
   "author": "jrdmacfarlane@gmail.com",
   "license": "ISC",
