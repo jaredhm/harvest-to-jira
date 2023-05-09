@@ -350,6 +350,8 @@ const logTimeEntriesToJira = async (
   config: Config,
   dryRun: boolean
 ) => {
+  let totalHours = 0;
+
   for (const entry of timeEntries) {
     const {
       id: harvestId,
@@ -435,6 +437,8 @@ const logTimeEntriesToJira = async (
       continue;
     }
 
+    totalHours += entry.rounded_hours;
+
     if (!hasExistingWorkLog(jiraIssue, harvestId)) {
       await logTimeEntryToJira(jiraIssue.key, entry, projectConfig, dryRun);
     } else {
@@ -445,6 +449,8 @@ const logTimeEntriesToJira = async (
 
     console.log(`✅ Harvest time entry (${harvestId}) done`);
   }
+
+  console.log("Total time: " + totalHours.toFixed(2));
 };
 
 (async () => {
