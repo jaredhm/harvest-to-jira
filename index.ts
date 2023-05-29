@@ -275,9 +275,10 @@ const logTimeEntryToJira = async (
   jiraKey: string,
   entry: HarvestTimeEntry,
   projectConfig: ProjectConfig,
-  dryRun: boolean
+  dryRun: boolean,
+  jiraMessage: string
 ) => {
-  const { id: harvestId, spent_date, rounded_hours } = entry;
+  const { id: harvestId, spent_date, rounded_hours, notes } = entry;
   const userTz = (await getUserTimeZone(projectConfig)) ?? "America/New_York";
   const url = new URL(
     `/rest/api/3/issue/${jiraKey}/worklog`,
@@ -288,33 +289,45 @@ const logTimeEntryToJira = async (
     LocalTime.NOON,
     ZoneId.of(userTz)
   );
-  const requestBody: JiraWorkLog = {
+  let requestBody: JiraWorkLog = {
     timeSpentSeconds: rounded_hours * 60 * 60,
     notifyUsers: false,
     comment: {
       version: 1,
       type: "doc",
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            {
-              type: "emoji",
-              attrs: {
-                shortName: ":timer:",
-                id: "23f2",
-              },
-            },
-            {
-              type: "text",
-              text: `Harvest time entry ID: ${harvestId}`,
-            },
-          ],
-        },
-      ],
+      content: [],
     },
     started: startedDate.format(JIRA_DATE_TIME_FORMATTER),
   };
+
+  if (jiraMessage) {
+    requestBody.comment?.content?.push({
+      type: "paragraph",
+      content: [
+        {
+          type: "text",
+          text: jiraMessage,
+        },
+      ],
+    });
+  } else {
+    requestBody.comment?.content?.push({
+      type: "paragraph",
+      content: [
+        {
+          type: "emoji",
+          attrs: {
+            shortName: ":timer:",
+            id: "23f2",
+          },
+        },
+        {
+          type: "text",
+          text: `Harvest time entry ID: ${harvestId}`,
+        },
+      ],
+    });
+  }
 
   if (dryRun) {
     console.log(
@@ -421,6 +434,9 @@ const logTimeEntriesToJira = async (
 
     const jiraKey = matches.length < 1 ? null : matches[0];
 
+    // Allows messages logged in a "DP-XXXX - this is a message" format.
+    const jiraMessage = typeof jiraKey !== 'string' ? "" : notes?.replace(jiraKey + " - ", "").toString()!;
+
     if (!jiraKey) {
       console.error(
         `Jira key missing from Harvest entry from ${spent_date} (${harvestId}) - skipping`
@@ -440,7 +456,7 @@ const logTimeEntriesToJira = async (
     totalHours += entry.rounded_hours;
 
     if (!hasExistingWorkLog(jiraIssue, harvestId)) {
-      await logTimeEntryToJira(jiraIssue.key, entry, projectConfig, dryRun);
+      await logTimeEntryToJira(jiraIssue.key, entry, projectConfig, dryRun, jiraMessage);
     } else {
       console.log(
         `Found Harvest time entry already associated with ${jiraKey} - skipping Jira update`
