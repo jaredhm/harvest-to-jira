@@ -15,8 +15,14 @@ import path from "path";
 import fetch from "node-fetch";
 import prompts from "prompts";
 import assert from "assert";
-import { AnyIterable, map, pipeline } from "streaming-iterables";
-import pino from 'pino';
+import {
+  AnyIterable,
+  consume,
+  filter,
+  map,
+  pipeline,
+} from "streaming-iterables";
+import pino from "pino";
 
 const logger = pino();
 const CONFIG_DIR = "config";
@@ -24,6 +30,7 @@ const HARVEST_API_BASE_URL = "https://api.harvestapp.com";
 const JIRA_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern(
   "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
 );
+const TZ_AMERICA_NEW_YORK = "America/New_York";
 
 type UserConfig = Partial<{
   harvestUserId: number;
@@ -109,16 +116,23 @@ interface JiraIssue {
 }
 
 interface BaseIterable {
-  timeEntry: HarvestTimeEntry
+  timeEntry: HarvestTimeEntry;
 }
 
-type WithFullConfig<T extends BaseIterable> = T & {
-  config: Config
-}
+type WithFullConfig = BaseIterable & {
+  config: Config;
+};
 
-type WithProjectConfig<T extends WithFullConfig<BaseIterable>> = T & {
-  projectConfig: ProjectConfig | null
-}
+type ProjectConfigEnrichment = { projectConfig: ProjectConfig };
+type WithProjectConfig = WithFullConfig & Partial<ProjectConfigEnrichment>;
+type DefinitelyWithProjectConfig = WithFullConfig & ProjectConfigEnrichment;
+
+type UserTzEnrichment = { userTz: string };
+type DefinitelyWithUserTz = DefinitelyWithProjectConfig & UserTzEnrichment;
+
+type JiraIssueEnrichment = { jiraIssue: JiraIssue };
+type WithJiraIssue = DefinitelyWithUserTz & Partial<JiraIssueEnrichment>;
+type DefinitelyWithJiraIssue = DefinitelyWithUserTz & JiraIssueEnrichment;
 
 const getHarvestHeaders = (config: Config) => {
   assert(config.user.harvestAccessToken);
@@ -146,7 +160,7 @@ const getJiraHeaders = (projectConfig: ProjectConfig) => {
   };
 };
 
-const getHarvestTimeEntries = async function * (
+const getHarvestTimeEntries = async function* (
   timeFloor: LocalDateTime,
   timeCeiling: LocalDateTime,
   config: Config
@@ -172,43 +186,9 @@ const getHarvestTimeEntries = async function * (
 
     const responseObj = (await response.json()) as HarvestTimeEntriesPage;
     requestMore = responseObj.next_page !== null;
-    yield * map(
-      (timeEntry) => ({ timeEntry }),
-      responseObj.time_entries
-    );
+    yield* map((timeEntry) => ({ timeEntry }), responseObj.time_entries);
   } while (requestMore);
 };
-
-// TODO XXX - currently unused
-//
-// const updateHarvestTimeEntry = async (
-//   { id: harvestId, notes },
-//   jiraWorkLog,
-//   dryRun,
-//   config
-// ) => {
-//   const url = new URL(`/v2/time_entries/${harvestId}`, HARVEST_API_BASE_URL);
-//   const requestBody = {
-//     notes: `${notes}\n\n${HARVEST_LOG_STRING}\n${jiraWorkLog.self}`
-//   };
-//
-//   if (dryRun) {
-//     console.log(`Harvest PATCH request body for time entry (${harvestId}):\n${JSON.stringify(requestBody, undefined, 2)}`);
-//     return;
-//   }
-//
-//   const response = await fetch(url, {
-//     method: "PATCH",
-//     headers: getHarvestHeaders(config),
-//     body: JSON.stringify(requestBody)
-//   });
-//   if (!response.ok) {
-//     console.error(`Cannot update Harvest time entry (${harvestId}) - ${response.statusText}`);
-//     console.log(await response.text());
-//     return;
-//   }
-//   console.log(`Successfully updated time entry in Harvest (${harvestId})`);
-// }
 
 const getJiraIssue = async (
   jiraKey: string,
@@ -250,130 +230,140 @@ const hasExistingWorkLog = (
   return allComments.some((c) => c.includes(`${harvestId}`));
 };
 
-const getUserTimeZone = async (
-  projectConfig: ProjectConfig
-): Promise<string | null> => {
-  assert(projectConfig.jiraProjectKey);
-  assert(projectConfig.atlassianAccountEmail);
+const enrichWithUserTz = async function* (
+  items: AnyIterable<DefinitelyWithProjectConfig>
+): AsyncIterable<DefinitelyWithUserTz> {
+  let timezone: JiraUser["timeZone"] | undefined = undefined;
 
-  const url = new URL(
-    `/rest/api/3/user/assignable/multiProjectSearch`,
-    `https://${projectConfig.atlassianDomain}.atlassian.net`
-  );
-  url.searchParams.set("projectKeys", projectConfig.jiraProjectKey);
-  url.searchParams.set("query", projectConfig.atlassianAccountEmail);
+  for await (const item of items) {
+    const { projectConfig } = item;
+    assert(projectConfig.jiraProjectKey);
+    assert(projectConfig.atlassianAccountEmail);
 
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers: getJiraHeaders(projectConfig),
-  });
-  if (!response.ok) {
-    console.error(
-      `Couldn't fetch user's timezone setting - ${response.statusText}`
+    const url = new URL(
+      `/rest/api/3/user/assignable/multiProjectSearch`,
+      `https://${projectConfig.atlassianDomain}.atlassian.net`
     );
-    return null;
+    url.searchParams.set("projectKeys", projectConfig.jiraProjectKey);
+    url.searchParams.set("query", projectConfig.atlassianAccountEmail);
+
+    if (timezone) {
+      yield { ...item, userTz: timezone };
+    } else {
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers: getJiraHeaders(projectConfig),
+      });
+      if (!response.ok) {
+        console.warn(
+          `Couldn't fetch user's timezone setting - ${response.statusText}`
+        );
+      } else {
+        const [user] = (await response.json()) as Array<JiraUser>;
+
+        if (!user) {
+          console.warn(
+            `Couldn't fetch user's timezone setting - no matching user`
+          );
+        } else {
+          timezone = user.timeZone;
+        }
+      }
+      yield { ...item, userTz: timezone ?? TZ_AMERICA_NEW_YORK };
+    }
   }
-
-  const [user] = (await response.json()) as Array<JiraUser>;
-
-  if (!user) {
-    console.error(`Couldn't fetch user's timezone setting - no matching user`);
-    return null;
-  }
-
-  return user.timeZone;
 };
 
-const logTimeEntryToJira = async (
-  jiraKey: string,
-  entry: HarvestTimeEntry,
-  projectConfig: ProjectConfig,
+const logTimeEntriesToJira = async function* (
+  items: AnyIterable<DefinitelyWithJiraIssue>,
   dryRun: boolean
-) => {
-  const { id: harvestId, spent_date, rounded_hours } = entry;
-  const userTz = (await getUserTimeZone(projectConfig)) ?? "America/New_York";
-  const url = new URL(
-    `/rest/api/3/issue/${jiraKey}/worklog`,
-    `https://${projectConfig.atlassianDomain}.atlassian.net`
-  );
-  const startedDate = ZonedDateTime.of(
-    LocalDate.parse(spent_date),
-    LocalTime.NOON,
-    ZoneId.of(userTz)
-  );
-  const requestBody: JiraWorkLog = {
-    timeSpentSeconds: rounded_hours * 60 * 60,
-    notifyUsers: false,
-    comment: {
-      version: 1,
-      type: "doc",
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            {
-              type: "emoji",
-              attrs: {
-                shortName: ":timer:",
-                id: "23f2",
-              },
-            },
-            {
-              type: "text",
-              text: `Harvest time entry ID: ${harvestId}`,
-            },
-          ],
-        },
-      ],
-    },
-    started: startedDate.format(JIRA_DATE_TIME_FORMATTER),
-  };
-
-  if (dryRun) {
-    console.log(
-      `Jira POST body for Harvest time entry (${jiraKey}):\n${JSON.stringify(
-        requestBody,
-        undefined,
-        2
-      )}`
-    );
-    return null;
-  }
-
-  const response = await fetch(url.toString(), {
-    method: "POST",
-    headers: {
-      ...getJiraHeaders(projectConfig),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(requestBody),
-  });
-  if (!response.ok) {
-    console.error(
-      `Logging Harvest time entry (${harvestId}) to Jira failed - ${response.statusText}`
-    );
-    return null;
-  }
-  console.log(`Successfully logged time to ${jiraKey}`);
-  return response.json();
-};
-
-const findProjectConfig = async function * (items: AnyIterable<WithFullConfig<BaseIterable>>): AsyncIterable<WithProjectConfig<WithFullConfig<BaseIterable>>> {
+) {
   for await (const item of items) {
     const {
-      timeEntry: {
-        id: harvestId,
-        is_closed,
-        project,
-        spent_date,
-        user,
+      timeEntry: { id: harvestId, spent_date, rounded_hours },
+      projectConfig,
+      jiraIssue: { key: jiraKey },
+      userTz,
+    } = item;
+    const url = new URL(
+      `/rest/api/3/issue/${jiraKey}/worklog`,
+      `https://${projectConfig.atlassianDomain}.atlassian.net`
+    );
+    const startedDate = ZonedDateTime.of(
+      LocalDate.parse(spent_date),
+      LocalTime.NOON,
+      ZoneId.of(userTz)
+    );
+    const requestBody: JiraWorkLog = {
+      timeSpentSeconds: rounded_hours * 60 * 60,
+      notifyUsers: false,
+      comment: {
+        version: 1,
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "emoji",
+                attrs: {
+                  shortName: ":timer:",
+                  id: "23f2",
+                },
+              },
+              {
+                type: "text",
+                text: `Harvest time entry ID: ${harvestId}`,
+              },
+            ],
+          },
+        ],
       },
-      config
+      started: startedDate.format(JIRA_DATE_TIME_FORMATTER),
+    };
+
+    if (dryRun) {
+      console.log(
+        `Jira POST body for Harvest time entry (${jiraKey}):\n${JSON.stringify(
+          requestBody,
+          undefined,
+          2
+        )}`
+      );
+      return null;
+    }
+
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        ...getJiraHeaders(projectConfig),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    });
+    if (!response.ok) {
+      console.error(
+        `Logging Harvest time entry (${harvestId}) to Jira failed - ${response.statusText}`
+      );
+      return null;
+    }
+    console.log(`Successfully logged time to ${jiraKey}`);
+    return response.json();
+  }
+};
+
+const enrichWithProjectConfig = async function* (
+  items: AnyIterable<WithFullConfig>
+): AsyncIterable<WithProjectConfig | DefinitelyWithProjectConfig> {
+  for await (const item of items) {
+    const {
+      timeEntry: { id: harvestId, is_closed, project, spent_date, user },
+      config,
     } = item;
     let warning: string | undefined = undefined;
 
     if (!is_closed) {
-      warning = `Time entry from ${spent_date} (${harvestId}) is not closed`
+      warning = `Time entry from ${spent_date} (${harvestId}) is not closed`;
     }
 
     if (
@@ -381,7 +371,7 @@ const findProjectConfig = async function * (items: AnyIterable<WithFullConfig<Ba
       config.user.harvestUserId &&
       config.user.harvestUserId !== user.id
     ) {
-      warning = `Time entry from ${spent_date} (${harvestId}) associated with unrecognized user (${user.id})`
+      warning = `Time entry from ${spent_date} (${harvestId}) associated with unrecognized user (${user.id})`;
     }
 
     const projectConfig = (config.projects ?? []).find(
@@ -391,124 +381,64 @@ const findProjectConfig = async function * (items: AnyIterable<WithFullConfig<Ba
     );
 
     if (!projectConfig) {
-      warning = `Time entry from ${spent_date} (${harvestId}) associated with unrecognized Harvest project (${project.id})`
+      warning = `Time entry from ${spent_date} (${harvestId}) associated with unrecognized Harvest project (${project.id})`;
     }
 
     if (warning) {
       logger.warn(warning);
-      yield { ...item, projectConfig: null };
-    } else {
-      assert(projectConfig);
-      yield { ...item, projectConfig };
     }
+
+    yield { ...item, projectConfig };
   }
-}
+};
 
-const filterTimeEntry = async (item: WithFullConfig<BaseIterable>): Promise<boolean> => {
-  const {
-    timeEntry: {
-      id: harvestId,
-      is_closed,
-      notes,
-      project,
-      spent_date,
-      user,
-    },
-    config
-  } = item;
+const enrichWithJiraIssue = async function* (
+  items: AnyIterable<DefinitelyWithUserTz>
+): AsyncIterable<WithJiraIssue> {
+  for await (const item of items) {
+    const {
+      timeEntry: { id: harvestId, notes, spent_date },
+      projectConfig,
+    } = item;
 
-  let warning: string | undefined = undefined;
-
-  if (!is_closed) {
-    warning = `Skipping Harvest entry from ${spent_date} (${harvestId}) - time entry is not closed`
-  }
-
-  if (
-    config.user &&
-    config.user.harvestUserId &&
-    config.user.harvestUserId !== user.id
-  ) {
-    warning = `Skipping Harvest entry from ${spent_date} (${harvestId}) - Harvest user (${user.id}) does not match config`
-  }
-
-  const projectConfig = (config.projects ?? []).find(
-    ({ harvestId: configHarvestId }) => {
-      return configHarvestId === project.id;
-    }
-  );
-
-  if (!projectConfig) {
-    warning = `Skipping Harvest entry from ${spent_date} (${harvestId}) - no Jira key maps to Harvest project (${project.id})`
-  }
-
-  if (warning) {
-    console.warn(warning);
-    return false;
-  }
-
-  assert(projectConfig);
-  let matches = new Array<string>();
-  let match: RegExpMatchArray | null = null;
-  const jiraKeyRegex = new RegExp(
-    `(${projectConfig.jiraProjectKey}\\-[0-9]+)`,
-    "g"
-  );
-  do {
-    match = jiraKeyRegex.exec(notes ?? "");
-    if (match && match[0]) {
-      matches.push(match[0]);
-    }
-  } while (match !== null);
-
-  if (matches.length > 1) {
-    console.log(
-      `Found multiple Jira tickets in Harvest entry from ${spent_date} (${harvestId}) - choosing first`
+    let matches = new Array<string>();
+    let match: RegExpMatchArray | null = null;
+    const jiraKeyRegex = new RegExp(
+      `(${projectConfig.jiraProjectKey}\\-[0-9]+)`,
+      "g"
     );
-  }
+    do {
+      match = jiraKeyRegex.exec(notes ?? "");
+      if (match && match[0]) {
+        matches.push(match[0]);
+      }
+    } while (match !== null);
 
-  let jiraIssue;
-  let jiraError: string | undefined = undefined;
-  const jiraKey = matches.length < 1 ? null : matches[0];
-
-  if (!jiraKey) {
-    jiraError = `Jira key missing from Harvest entry from ${spent_date} (${harvestId}) - skipping`
-  } else {
-    jiraIssue = await getJiraIssue(jiraKey, projectConfig);
-  }
-
-  if (!jiraIssue) {
-    jiraError = `Could not find issue associated with ${jiraKey} - skipping`
-  }
-
-  if (jiraIssue && hasExistingWorkLog(jiraIssue, harvestId)) {
-    jiraError = ``
-  }
-
-  if (jiraError) {
-    console.error(jiraError);
-    return false;
-  }
-
-  return true;
-}
-
-const logTimeEntriesToJira = async (
-  timeEntries: Array<HarvestTimeEntry>,
-  config: Config,
-  dryRun: boolean
-) => {
-  for (const entry of timeEntries) {
-
-
-    if (!hasExistingWorkLog(jiraIssue, harvestId)) {
-      await logTimeEntryToJira(jiraIssue.key, entry, projectConfig, dryRun);
-    } else {
-      console.log(
-        `Found Harvest time entry already associated with ${jiraKey} - skipping Jira update`
+    if (matches.length > 1) {
+      logger.info(
+        `Found multiple Jira tickets in Harvest entry from ${spent_date} (${harvestId}) - choosing first`
       );
     }
 
-    console.log(`✅ Harvest time entry (${harvestId}) done`);
+    let jiraIssue: JiraIssue | undefined = undefined;
+    let warning: string | undefined = undefined;
+    const jiraKey = matches.length < 1 ? null : matches[0];
+
+    if (!jiraKey) {
+      warning = `Jira key missing from Harvest entry from ${spent_date} (${harvestId})`;
+    } else {
+      jiraIssue = (await getJiraIssue(jiraKey, projectConfig)) ?? undefined;
+    }
+
+    if (!jiraIssue) {
+      warning = `Could not find issue associated with ${jiraKey}`;
+    }
+
+    if (warning) {
+      logger.warn(warning);
+    }
+
+    yield { ...item, jiraIssue };
   }
 };
 
@@ -559,20 +489,36 @@ const logTimeEntriesToJira = async (
   const sundayAfter = sundayBefore.plusWeeks(1);
 
   await pipeline(
-    () => getHarvestTimeEntries(
-      sundayBefore.atStartOfDay(),
-      sundayAfter.atStartOfDay().minusSeconds(1),
-      configJson
-    ),
+    () =>
+      getHarvestTimeEntries(
+        sundayBefore.atStartOfDay(),
+        sundayAfter.atStartOfDay().minusSeconds(1),
+        configJson
+      ),
     map((item) => ({ ...item, config: configJson })),
-    findProjectConfig,
-  )
-
-  const timeEntries = await getHarvestTimeEntries(
-    sundayBefore.atStartOfDay(),
-    sundayAfter.atStartOfDay().minusSeconds(1),
-    configJson
+    enrichWithProjectConfig,
+    filter((item: WithProjectConfig): item is DefinitelyWithProjectConfig =>
+      Boolean(item.projectConfig)
+    ),
+    enrichWithUserTz,
+    enrichWithJiraIssue,
+    filter((item: WithJiraIssue): item is DefinitelyWithJiraIssue =>
+      Boolean(item.jiraIssue)
+    ),
+    filter(async (item: DefinitelyWithJiraIssue) => {
+      const {
+        jiraIssue,
+        timeEntry: { id: harvestId, spent_date },
+      } = item;
+      if (await hasExistingWorkLog(jiraIssue, harvestId)) {
+        logger.warn(
+          `Time entry from ${spent_date} (${harvestId}) already logged to ${jiraIssue.key}`
+        );
+        return false;
+      }
+      return true;
+    }),
+    (items) => logTimeEntriesToJira(items, responses.dryRun),
+    consume
   );
-
-  await logTimeEntriesToJira(timeEntries, configJson, responses.dryRun);
 })();
