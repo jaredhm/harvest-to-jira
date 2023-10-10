@@ -18,14 +18,15 @@ import pino from "pino";
 import prompts from "prompts";
 import {
   AnyIterable,
-  consume,
   filter,
   map,
   pipeline,
+  reduce,
   tap,
 } from "streaming-iterables";
 
 const logger = pino({
+  level: process.env.LOG_LEVEL ?? "debug",
   transport: {
     target: "pino-pretty",
   },
@@ -361,18 +362,6 @@ const enrichWithProjectConfig = async function* (
       timeEntry: { id: harvestId, is_closed, project, spent_date, user },
       config,
     } = item;
-    if (!is_closed) {
-      logger.info(`Time entry from ${spent_date} (${harvestId}) is not closed`);
-    }
-    if (
-      config.user &&
-      config.user.harvestUserId &&
-      config.user.harvestUserId !== user.id
-    ) {
-      logger.warn(
-        `Time entry from ${spent_date} (${harvestId}) associated with unrecognized user (${user.id})`
-      );
-    }
 
     const projectConfig = (config.projects ?? []).find(
       ({ harvestId: configHarvestId }) => {
@@ -436,6 +425,36 @@ const enrichWithJiraIssue = async function* (
   }
 };
 
+const canLogItemToJira = (item: DefinitelyWithJiraIssue): boolean => {
+  const {
+    jiraIssue,
+    config,
+    timeEntry: { id: harvestId, spent_date, is_closed, user },
+  } = item;
+
+  if (!is_closed) {
+    logger.info(`Time entry from ${spent_date} (${harvestId}) is not closed`);
+    return false;
+  }
+  if (
+    config.user &&
+    config.user.harvestUserId &&
+    config.user.harvestUserId !== user.id
+  ) {
+    logger.warn(
+      `Time entry from ${spent_date} (${harvestId}) associated with unrecognized user (${user.id})`
+    );
+    return false;
+  }
+  if (hasExistingWorkLog(jiraIssue, harvestId)) {
+    logger.info(
+      `Time entry from ${spent_date} (${harvestId}) already logged to ${jiraIssue.key}`
+    );
+    return false;
+  }
+  return true;
+};
+
 (async () => {
   const mostRecentMonday = LocalDate.now().with(
     TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)
@@ -482,7 +501,7 @@ const enrichWithJiraIssue = async function* (
   );
   const sundayAfter = sundayBefore.plusWeeks(1);
 
-  await pipeline(
+  const totalLoggedHours = await pipeline(
     () =>
       getHarvestTimeEntries(
         sundayBefore.atStartOfDay(),
@@ -499,20 +518,10 @@ const enrichWithJiraIssue = async function* (
     filter((item: WithJiraIssue): item is DefinitelyWithJiraIssue =>
       Boolean(item.jiraIssue)
     ),
-    filter((item: DefinitelyWithJiraIssue) => {
-      const {
-        jiraIssue,
-        timeEntry: { id: harvestId, spent_date },
-      } = item;
-      if (hasExistingWorkLog(jiraIssue, harvestId)) {
-        logger.info(
-          `Time entry from ${spent_date} (${harvestId}) already logged to ${jiraIssue.key}`
-        );
-        return false;
-      }
-      return true;
-    }),
+    filter(canLogItemToJira),
     (items) => logTimeEntriesToJira(items, responses.dryRun),
-    consume
+    reduce((acc, item) => acc + item.timeEntry.rounded_hours, 0)
   );
+
+  logger.debug(`Logged ${totalLoggedHours.toFixed(2)} hour(s) in total`);
 })();
