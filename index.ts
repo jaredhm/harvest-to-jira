@@ -26,9 +26,9 @@ import {
 } from "streaming-iterables";
 
 const logger = pino({
-  transport:{
-    target: 'pino-pretty'
-  }
+  transport: {
+    target: "pino-pretty",
+  },
 });
 const CONFIG_DIR = "config";
 const HARVEST_API_BASE_URL = "https://api.harvestapp.com";
@@ -421,7 +421,9 @@ const enrichWithJiraIssue = async function* (
     const jiraKey = matches.length < 1 ? null : matches[0];
 
     if (!jiraKey) {
-      logger.warn(`Jira key missing from Harvest entry from ${spent_date} (${harvestId})`);
+      logger.warn(
+        `Jira key missing from Harvest entry from ${spent_date} (${harvestId})`
+      );
     } else {
       jiraIssue = (await getJiraIssue(jiraKey, projectConfig)) ?? undefined;
     }
