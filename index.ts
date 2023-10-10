@@ -25,7 +25,11 @@ import {
   tap,
 } from "streaming-iterables";
 
-const logger = pino();
+const logger = pino({
+  transport:{
+    target: 'pino-pretty'
+  }
+});
 const CONFIG_DIR = "config";
 const HARVEST_API_BASE_URL = "https://api.harvestapp.com";
 const JIRA_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern(
@@ -348,7 +352,7 @@ const logTimeEntriesToJira = function (
       );
       return;
     }
-    logger.info(`Successfully logged time to ${jiraKey}`);
+    logger.debug(`Successfully logged time to ${jiraKey}`);
   }, items);
 };
 
@@ -360,18 +364,17 @@ const enrichWithProjectConfig = async function* (
       timeEntry: { id: harvestId, is_closed, project, spent_date, user },
       config,
     } = item;
-    let warning: string | undefined = undefined;
-
     if (!is_closed) {
-      warning = `Time entry from ${spent_date} (${harvestId}) is not closed`;
+      logger.info(`Time entry from ${spent_date} (${harvestId}) is not closed`);
     }
-
     if (
       config.user &&
       config.user.harvestUserId &&
       config.user.harvestUserId !== user.id
     ) {
-      warning = `Time entry from ${spent_date} (${harvestId}) associated with unrecognized user (${user.id})`;
+      logger.warn(
+        `Time entry from ${spent_date} (${harvestId}) associated with unrecognized user (${user.id})`
+      );
     }
 
     const projectConfig = (config.projects ?? []).find(
@@ -379,13 +382,10 @@ const enrichWithProjectConfig = async function* (
         return configHarvestId === project.id;
       }
     );
-
     if (!projectConfig) {
-      warning = `Time entry from ${spent_date} (${harvestId}) associated with unrecognized Harvest project (${project.id})`;
-    }
-
-    if (warning) {
-      logger.warn(warning);
+      logger.info(
+        `Time entry from ${spent_date} (${harvestId}) associated with unrecognized Harvest project (${project.id})`
+      );
     }
 
     yield { ...item, projectConfig };
@@ -415,27 +415,22 @@ const enrichWithJiraIssue = async function* (
     } while (match !== null);
 
     if (matches.length > 1) {
-      logger.info(
+      logger.debug(
         `Found multiple Jira tickets in Harvest entry from ${spent_date} (${harvestId}) - choosing first`
       );
     }
 
     let jiraIssue: JiraIssue | undefined = undefined;
-    let warning: string | undefined = undefined;
     const jiraKey = matches.length < 1 ? null : matches[0];
 
     if (!jiraKey) {
-      warning = `Jira key missing from Harvest entry from ${spent_date} (${harvestId})`;
+      logger.warn(`Jira key missing from Harvest entry from ${spent_date} (${harvestId})`);
     } else {
       jiraIssue = (await getJiraIssue(jiraKey, projectConfig)) ?? undefined;
     }
 
-    if (!jiraIssue) {
-      warning = `Could not find issue associated with ${jiraKey}`;
-    }
-
-    if (warning) {
-      logger.warn(warning);
+    if (jiraKey && !jiraIssue) {
+      logger.warn(`Could not find issue associated with ${jiraKey}`);
     }
 
     yield { ...item, jiraIssue };
@@ -511,7 +506,7 @@ const enrichWithJiraIssue = async function* (
         timeEntry: { id: harvestId, spent_date },
       } = item;
       if (hasExistingWorkLog(jiraIssue, harvestId)) {
-        logger.warn(
+        logger.info(
           `Time entry from ${spent_date} (${harvestId}) already logged to ${jiraIssue.key}`
         );
         return false;

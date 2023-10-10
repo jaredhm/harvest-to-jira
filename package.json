@@ -26,6 +26,7 @@
     "assert": "^2.0.0",
     "node-fetch": "^2.6.9",
     "pino": "^8.16.0",
+    "pino-pretty": "^10.2.3",
     "prettier": "^2.8.4",
     "prompts": "^2.4.2",
     "streaming-iterables": "^8.0.1",
