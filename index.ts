@@ -1,28 +1,29 @@
-import "@js-joda/timezone"; // required to use ZoneId
-import { promises as fs, constants } from "fs";
 import {
-  LocalDate,
-  ZonedDateTime,
-  LocalTime,
-  ZoneId,
-  TemporalAdjusters,
-  DayOfWeek,
-  convert,
   DateTimeFormatter,
+  DayOfWeek,
+  LocalDate,
   LocalDateTime,
+  LocalTime,
+  TemporalAdjusters,
+  ZoneId,
+  ZonedDateTime,
+  convert,
 } from "@js-joda/core";
-import path from "path";
-import fetch from "node-fetch";
-import prompts from "prompts";
+import "@js-joda/timezone"; // required to use ZoneId
 import assert from "assert";
+import { constants, promises as fs } from "fs";
+import fetch from "node-fetch";
+import path from "path";
+import pino from "pino";
+import prompts from "prompts";
 import {
   AnyIterable,
   consume,
   filter,
   map,
   pipeline,
+  tap,
 } from "streaming-iterables";
-import pino from "pino";
 
 const logger = pino();
 const CONFIG_DIR = "config";
@@ -204,7 +205,7 @@ const getJiraIssue = async (
   });
 
   if (!response.ok) {
-    console.error(
+    logger.error(
       `Encountered error fetching Jira issue - ${response.statusText}`
     );
     return null;
@@ -255,14 +256,14 @@ const enrichWithUserTz = async function* (
         headers: getJiraHeaders(projectConfig),
       });
       if (!response.ok) {
-        console.warn(
+        logger.warn(
           `Couldn't fetch user's timezone setting - ${response.statusText}`
         );
       } else {
         const [user] = (await response.json()) as Array<JiraUser>;
 
         if (!user) {
-          console.warn(
+          logger.warn(
             `Couldn't fetch user's timezone setting - no matching user`
           );
         } else {
@@ -274,11 +275,11 @@ const enrichWithUserTz = async function* (
   }
 };
 
-const logTimeEntriesToJira = async function* (
+const logTimeEntriesToJira = function (
   items: AnyIterable<DefinitelyWithJiraIssue>,
   dryRun: boolean
 ) {
-  for await (const item of items) {
+  return tap(async (item) => {
     const {
       timeEntry: { id: harvestId, spent_date, rounded_hours },
       projectConfig,
@@ -323,14 +324,14 @@ const logTimeEntriesToJira = async function* (
     };
 
     if (dryRun) {
-      console.log(
+      logger.debug(
         `Jira POST body for Harvest time entry (${jiraKey}):\n${JSON.stringify(
           requestBody,
           undefined,
           2
         )}`
       );
-      return null;
+      return;
     }
 
     const response = await fetch(url.toString(), {
@@ -342,14 +343,13 @@ const logTimeEntriesToJira = async function* (
       body: JSON.stringify(requestBody),
     });
     if (!response.ok) {
-      console.error(
+      logger.error(
         `Logging Harvest time entry (${harvestId}) to Jira failed - ${response.statusText}`
       );
-      return null;
+      return;
     }
-    console.log(`Successfully logged time to ${jiraKey}`);
-    return response.json();
-  }
+    logger.info(`Successfully logged time to ${jiraKey}`);
+  }, items);
 };
 
 const enrichWithProjectConfig = async function* (
@@ -505,12 +505,12 @@ const enrichWithJiraIssue = async function* (
     filter((item: WithJiraIssue): item is DefinitelyWithJiraIssue =>
       Boolean(item.jiraIssue)
     ),
-    filter(async (item: DefinitelyWithJiraIssue) => {
+    filter((item: DefinitelyWithJiraIssue) => {
       const {
         jiraIssue,
         timeEntry: { id: harvestId, spent_date },
       } = item;
-      if (await hasExistingWorkLog(jiraIssue, harvestId)) {
+      if (hasExistingWorkLog(jiraIssue, harvestId)) {
         logger.warn(
           `Time entry from ${spent_date} (${harvestId}) already logged to ${jiraIssue.key}`
         );
