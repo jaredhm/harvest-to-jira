@@ -329,11 +329,8 @@ const logTimeEntriesToJira = function (
 
     if (dryRun) {
       logger.debug(
-        `Jira POST body for Harvest time entry (${jiraKey}):\n${JSON.stringify(
-          requestBody,
-          undefined,
-          2
-        )}`
+        `Running in dry mode - skipping worklog creation on Jira issue (${jiraKey})`,
+        requestBody
       );
       return;
     }
