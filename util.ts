@@ -103,8 +103,13 @@ const getJiraIssue = async (
   });
 
   if (!response.ok) {
+    const responseBody = await response.text();
     logger.error(
-      `Encountered error fetching Jira issue - ${response.statusText}`
+      {
+        responseBody,
+        responseStatus: response.status,
+      },
+      `Encountered error fetching Jira issue`
     );
     return null;
   }
@@ -135,7 +140,10 @@ const enrichWithUserTz = async function* (
   let timezone: JiraUser["timeZone"] | undefined = undefined;
 
   for await (const item of items) {
-    const { projectConfig } = item;
+    const {
+      projectConfig,
+      timeEntry: { id: harvestId },
+    } = item;
     assert(projectConfig.jiraProjectKey);
     assert(projectConfig.atlassianAccountEmail);
 
@@ -154,8 +162,14 @@ const enrichWithUserTz = async function* (
         headers: getJiraHeaders(projectConfig),
       });
       if (!response.ok) {
-        logger.warn(
-          `Couldn't fetch user's timezone setting - ${response.statusText}`
+        const responseBody = await response.text();
+        logger.error(
+          {
+            timeEntryId: harvestId,
+            responseCode: response.status,
+            responseBody,
+          },
+          `Couldn't fetch user's timezone setting - encountered a Jira error`
         );
       } else {
         const [user] = (await response.json()) as Array<JiraUser>;
@@ -204,13 +218,6 @@ const logTimeEntriesToJira = function (
             type: "paragraph",
             content: [
               {
-                type: "emoji",
-                attrs: {
-                  shortName: ":timer:",
-                  id: "23f2",
-                },
-              },
-              {
                 type: "text",
                 text: `Harvest time entry ID: ${harvestId}`,
               },
@@ -223,8 +230,8 @@ const logTimeEntriesToJira = function (
 
     if (dryRun) {
       logger.debug(
-        `Running in dry mode - skipping worklog creation on Jira issue (${jiraKey})`,
-        requestBody
+        requestBody,
+        `Running in dry mode - skipping worklog creation on Jira issue (${jiraKey})`
       );
       return;
     }
@@ -238,8 +245,14 @@ const logTimeEntriesToJira = function (
       body: JSON.stringify(requestBody),
     });
     if (!response.ok) {
+      const responseBody = await response.text();
       logger.error(
-        `Logging Harvest time entry (${harvestId}) to Jira failed - ${response.statusText}`
+        {
+          timeEntryId: harvestId,
+          responseCode: response.status,
+          responseBody,
+        },
+        `Logging Harvest time entry to Jira failed`
       );
       return;
     }
@@ -252,7 +265,7 @@ const enrichWithProjectConfig = async function* (
 ): AsyncIterable<WithProjectConfig | DefinitelyWithProjectConfig> {
   for await (const item of items) {
     const {
-      timeEntry: { id: harvestId, is_closed, project, spent_date, user },
+      timeEntry: { id: harvestId, project, spent_date, notes },
       config,
     } = item;
 
@@ -263,7 +276,13 @@ const enrichWithProjectConfig = async function* (
     );
     if (!projectConfig) {
       logger.info(
-        `Time entry from ${spent_date} (${harvestId}) associated with unrecognized Harvest project (${project.id})`
+        {
+          timeEntryId: harvestId,
+          timeEntryDesc: notes,
+          projectId: project.id,
+          projectDesc: project.name,
+        },
+        `Time entry from ${spent_date} associated with unrecognized Harvest project`
       );
     }
 
@@ -295,7 +314,11 @@ const enrichWithJiraIssue = async function* (
 
     if (matches.length > 1) {
       logger.debug(
-        `Found multiple Jira tickets in Harvest entry from ${spent_date} (${harvestId}) - choosing first`
+        {
+          timeEntryId: harvestId,
+          timeEntryDesc: notes,
+        },
+        `Found multiple Jira tickets in Harvest entry from ${spent_date} - choosing first`
       );
     }
 
@@ -304,7 +327,11 @@ const enrichWithJiraIssue = async function* (
 
     if (!jiraKey) {
       logger.warn(
-        `Jira key missing from Harvest entry from ${spent_date} (${harvestId})`
+        {
+          timeEntryId: harvestId,
+          timeEntryDesc: notes,
+        },
+        `Jira key missing from Harvest entry from ${spent_date}`
       );
     } else {
       jiraIssue = (await getJiraIssue(jiraKey, projectConfig)) ?? undefined;
@@ -322,11 +349,17 @@ const canLogItemToJira = (item: DefinitelyWithJiraIssue): boolean => {
   const {
     jiraIssue,
     config,
-    timeEntry: { id: harvestId, spent_date, is_closed, user },
+    timeEntry: { id: harvestId, spent_date, is_closed, user, notes },
   } = item;
 
   if (!is_closed) {
-    logger.info(`Time entry from ${spent_date} (${harvestId}) is not closed`);
+    logger.info(
+      {
+        timeEntryId: harvestId,
+        timeEntryDesc: notes,
+      },
+      `Time entry from ${spent_date} is not closed`
+    );
     return false;
   }
   if (
@@ -335,13 +368,22 @@ const canLogItemToJira = (item: DefinitelyWithJiraIssue): boolean => {
     config.user.harvestUserId !== user.id
   ) {
     logger.warn(
-      `Time entry from ${spent_date} (${harvestId}) associated with unrecognized user (${user.id})`
+      {
+        userId: user.id,
+        timeEntryId: harvestId,
+        timeEntryDesc: notes,
+      },
+      `Time entry from ${spent_date} associated with unrecognized user`
     );
     return false;
   }
   if (hasExistingWorkLog(jiraIssue, harvestId)) {
     logger.info(
-      `Time entry from ${spent_date} (${harvestId}) already logged to ${jiraIssue.key}`
+      {
+        timeEntryId: harvestId,
+        timeEntryDesc: notes,
+      },
+      `Time entry from ${spent_date} already logged to ${jiraIssue.key}`
     );
     return false;
   }
