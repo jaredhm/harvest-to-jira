@@ -16,13 +16,14 @@ import {
   DefinitelyWithJiraIssue,
   DefinitelyWithProjectConfig,
   DefinitelyWithUserTz,
+  DefinitelyWithWorkLogs,
   HarvestTimeEntriesPage,
   HarvestTimeEntry,
   JiraIssue,
   JiraUser,
   JiraWorkLog,
+  JiraWorkLogResponse,
   ProjectConfig,
-  WithFullConfig,
   WithJiraIssue,
   WithProjectConfig,
 } from "./types";
@@ -85,7 +86,13 @@ const getHarvestTimeEntries = async function* (
 
     const responseObj = (await response.json()) as HarvestTimeEntriesPage;
     requestMore = responseObj.next_page !== null;
-    yield* map((timeEntry) => ({ timeEntry }), responseObj.time_entries);
+    yield* map(
+      (timeEntry) => ({
+        timeEntry,
+        config,
+      }),
+      responseObj.time_entries
+    );
   } while (requestMore);
 };
 
@@ -117,13 +124,43 @@ const getJiraIssue = async (
   return (await response.json()) as JiraIssue;
 };
 
+const getWorklogs = async (
+  jiraKey: string,
+  projectConfig: ProjectConfig,
+  startAt = 0
+): Promise<JiraWorkLogResponse | null> => {
+  const url = new URL(
+    `/rest/api/3/issue/${jiraKey}/worklog`,
+    `https://${projectConfig.atlassianDomain}.atlassian.net`
+  );
+  url.searchParams.append("startAt", `${startAt}`);
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: getJiraHeaders(projectConfig),
+  });
+
+  if (!response.ok) {
+    const responseBody = await response.text();
+    logger.error(
+      {
+        responseBody,
+        responseStatus: response.status,
+      },
+      `Encountered error fetching Jira issue`
+    );
+    return null;
+  }
+
+  return (await response.json()) as JiraWorkLogResponse;
+};
+
 // Given a Jira issue and a harvest ID, looks for a worklog item
 // with a comment matching the harvest time entry ID
 const hasExistingWorkLog = (
-  jiraIssue: JiraIssue,
+  workLogs: Array<JiraWorkLog>,
   harvestId: HarvestTimeEntry["id"]
 ) => {
-  const allComments = (jiraIssue.fields?.worklog?.worklogs ?? [])
+  const allComments = workLogs
     .flatMap((worklog) =>
       worklog.comment?.content?.flatMap((p) =>
         p.content?.flatMap((t) => (t.type === "text" ? t.text : undefined))
@@ -261,7 +298,7 @@ const logTimeEntriesToJira = function (
 };
 
 const enrichWithProjectConfig = async function* (
-  items: AnyIterable<WithFullConfig>
+  items: AnyIterable<BaseIterable>
 ): AsyncIterable<WithProjectConfig | DefinitelyWithProjectConfig> {
   for await (const item of items) {
     const {
@@ -345,9 +382,38 @@ const enrichWithJiraIssue = async function* (
   }
 };
 
-const canLogItemToJira = (item: DefinitelyWithJiraIssue): boolean => {
+const enrichWithJiraWorkLogs = async function* (
+  items: AnyIterable<DefinitelyWithJiraIssue>
+): AsyncIterable<DefinitelyWithWorkLogs> {
+  for await (const item of items) {
+    const allWorkLogs = new Array<JiraWorkLog>();
+    const { jiraIssue, projectConfig } = item;
+
+    let startAt = 0;
+    do {
+      const response: JiraWorkLogResponse | null = await getWorklogs(
+        jiraIssue.key,
+        projectConfig,
+        startAt
+      );
+      if (!response) {
+        break;
+      }
+      startAt = response.startAt;
+      allWorkLogs.push(...(response.worklogs ?? []));
+    } while (startAt);
+
+    yield {
+      ...item,
+      workLogs: allWorkLogs,
+    };
+  }
+};
+
+const canLogItemToJira = (item: DefinitelyWithWorkLogs): boolean => {
   const {
     jiraIssue,
+    workLogs,
     config,
     timeEntry: { id: harvestId, spent_date, is_closed, user, notes },
   } = item;
@@ -377,7 +443,7 @@ const canLogItemToJira = (item: DefinitelyWithJiraIssue): boolean => {
     );
     return false;
   }
-  if (hasExistingWorkLog(jiraIssue, harvestId)) {
+  if (hasExistingWorkLog(workLogs, harvestId)) {
     logger.info(
       {
         timeEntryId: harvestId,
@@ -395,6 +461,7 @@ export {
   enrichWithJiraIssue,
   enrichWithProjectConfig,
   enrichWithUserTz,
+  enrichWithJiraWorkLogs,
   getHarvestHeaders,
   getHarvestTimeEntries,
   getJiraHeaders,

@@ -20,6 +20,7 @@ import {
 import {
   canLogItemToJira,
   enrichWithJiraIssue,
+  enrichWithJiraWorkLogs,
   enrichWithProjectConfig,
   enrichWithUserTz,
   getHarvestTimeEntries,
@@ -74,14 +75,13 @@ const run = async () => {
   );
   const sundayAfter = sundayBefore.plusWeeks(1);
 
-  const totalLoggedHours = await pipeline(
+  const logHours = await pipeline(
     () =>
       getHarvestTimeEntries(
         sundayBefore.atStartOfDay(),
         sundayAfter.atStartOfDay().minusSeconds(1),
         configJson
       ),
-    map((item) => ({ ...item, config: configJson })),
     enrichWithProjectConfig,
     filter((item: WithProjectConfig): item is DefinitelyWithProjectConfig =>
       Boolean(item.projectConfig)
@@ -91,9 +91,15 @@ const run = async () => {
     filter((item: WithJiraIssue): item is DefinitelyWithJiraIssue =>
       Boolean(item.jiraIssue)
     ),
+    enrichWithJiraWorkLogs,
     filter(canLogItemToJira),
-    (items) => logTimeEntriesToJira(items, responses.dryRun),
-    reduce((acc, item) => acc + item.timeEntry.rounded_hours, 0)
+    (items) => logTimeEntriesToJira(items, responses.dryRun)
+  );
+
+  const totalLoggedHours = await reduce(
+    (acc, item) => acc + item.timeEntry.rounded_hours,
+    0,
+    logHours
   );
 
   logger.debug(`Logged ${totalLoggedHours.toFixed(2)} hour(s) in total`);

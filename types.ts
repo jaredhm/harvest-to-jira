@@ -54,6 +54,7 @@ export type EmojiContent = {
     id: string;
   };
 };
+
 // this API resource may actually be less sparse than
 // the interface suggests, but Jira REST can be unreliable
 export type JiraWorkLog = Partial<{
@@ -72,27 +73,25 @@ export type JiraWorkLog = Partial<{
   }>;
 }>;
 
+export type JiraWorkLogResponse = {
+  startAt: number;
+  maxResults: number;
+  total: number;
+  worklogs: Array<JiraWorkLog>;
+};
+
 export interface JiraIssue {
   key: string;
-  fields: Partial<{
-    worklog: Partial<{
-      worklogs: Array<JiraWorkLog>;
-    }>;
-  }>;
 }
 
 export interface BaseIterable {
   timeEntry: HarvestTimeEntry;
+  config: Config;
 }
 
-export type WithFullConfig = BaseIterable & {
-  config: Config;
-};
-
 export type ProjectConfigEnrichment = { projectConfig: ProjectConfig };
-export type WithProjectConfig = WithFullConfig &
-  Partial<ProjectConfigEnrichment>;
-export type DefinitelyWithProjectConfig = WithFullConfig &
+export type WithProjectConfig = BaseIterable & Partial<ProjectConfigEnrichment>;
+export type DefinitelyWithProjectConfig = BaseIterable &
   ProjectConfigEnrichment;
 
 export type UserTzEnrichment = { userTz: string };
@@ -103,3 +102,7 @@ export type JiraIssueEnrichment = { jiraIssue: JiraIssue };
 export type WithJiraIssue = DefinitelyWithUserTz & Partial<JiraIssueEnrichment>;
 export type DefinitelyWithJiraIssue = DefinitelyWithUserTz &
   JiraIssueEnrichment;
+
+export type WorkLogEnrichment = { workLogs: Array<JiraWorkLog> };
+export type DefinitelyWithWorkLogs = DefinitelyWithJiraIssue &
+  WorkLogEnrichment;
