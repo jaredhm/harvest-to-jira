@@ -9,7 +9,7 @@
     "tc": "tsc --noEmit",
     "prettier:write": "prettier --config ./.prettierrc **/*.ts --write",
     "prettier:check": "prettier --check --config ./.prettierrc **/*.ts",
-    "lint": "npm run tc && npm run prettier-check"
+    "lint": "npm run tc && npm run prettier:check"
   },
   "author": "jrdmacfarlane@gmail.com",
   "license": "ISC",
