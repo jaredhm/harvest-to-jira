@@ -389,7 +389,7 @@ const enrichWithJiraWorkLogs = async function* (
     const allWorkLogs = new Array<JiraWorkLog>();
     const { jiraIssue, projectConfig } = item;
 
-    let startAt = 0;
+    let startAt: number | false = 0;
     do {
       const response: JiraWorkLogResponse | null = await getWorklogs(
         jiraIssue.key,
@@ -399,7 +399,10 @@ const enrichWithJiraWorkLogs = async function* (
       if (!response) {
         break;
       }
-      startAt = response.startAt;
+      startAt =
+        startAt + response.worklogs.length >= response.total
+          ? false
+          : startAt + response.worklogs.length;
       allWorkLogs.push(...(response.worklogs ?? []));
     } while (startAt);
 
