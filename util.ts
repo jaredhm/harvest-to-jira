@@ -75,7 +75,7 @@ const getHarvestTimeEntries = async function* (
       per_page: 100,
       from: timeFloor.toString(),
       to: timeCeiling.toString(),
-      user: config.user.harvestUserId,
+      user_id: config.user.harvestUserId,
     };
     Object.entries(params).forEach(([key, value]) => {
       if (value) {
