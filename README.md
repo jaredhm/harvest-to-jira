@@ -23,6 +23,16 @@ npm start
 - **dry run**: when run in "dry" mode, the tool will log Jira worklog items to the console instead of sending them to the Jira API
 - **path to config file**: path to your configuration file
 
+## Configuration
+Create a configuration file within `config/projects.json` (default path that the app will expect, but you can change it to a different one).
+The following information is needed:
+- Harvest user ID
+- Harvest access token: Obtained through https://id.getharvest.com/developers
+- Harvest organization (account) ID
+- Attlassian domain: the subdomain from the url you use to access Jira
+- Jira project key: Based on the Jira issue key the project has assigned. The code before the id number. Example: CG-1234. In this case, it would be "CG"
+- Jira API token
+
 ### Example configuration file:
 ```json
 {
@@ -50,5 +60,5 @@ npm start
 }
 ```
 
-### Need help? Wanna contribute?
+## Need help? Wanna contribute?
 Please don't hesitate to reach out! I wrote this tool for personal use when I was feeling particularly lazy ([the time spent on it so far probably won't pay off](https://xkcd.com/1319/)), so it's a bit rough around the edges.
