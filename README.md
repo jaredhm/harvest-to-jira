@@ -25,25 +25,30 @@ npm start
 
 ## Configuration
 Create a configuration file within `config/projects.json` (default path that the app will expect, but you can change it to a different one).
-The following information is needed:
-- Harvest user ID
+
+The following `user` information is needed:
+- Harvest user ID: This can be found in the URL on your Harvest profile page
 - Harvest access token: Obtained through https://id.getharvest.com/developers
-- Harvest organization (account) ID
-- Attlassian domain: the subdomain from the url you use to access Jira
+- Harvest account ID: Also https://id.getharvest.com/developers
+
+For each entry in `projects`:
+- Harvest ID: project IDs can be found in the "reports" tab in Harvest
 - Jira project key: Based on the Jira issue key the project has assigned. The code before the id number. Example: CG-1234. In this case, it would be "CG"
-- Jira API token
+- Atlassian domain: the subdomain from the url you use to access Jira
+- Atlassian API token: From https://id.atlassian.com/manage-profile/security/api-tokens
+- Atlassian Account Email: The email you use for Jira
 
 ### Example configuration file:
 ```json
 {
   "user": {
-    "harvestUserId": 1111111, // this can be found in the URL on your Harvest profile page
+    "harvestUserId": 1111111,
     "harvestAccessToken": "xxxxxxx.xx.xxxxxxxxx",
     "harvestAccountId": 222222
   },
   "projects": [
     {
-      "harvestId": 33333333, // project IDs can be found in the "reports" tab in Harvest
+      "harvestId": 33333333,
       "jiraProjectKey": "PFMLPB",
       "atlassianDomain": "lwd",
       "atlassianApiToken": "zzzzzzzzzzzzzzzzzzzzzzzz",
@@ -55,7 +60,7 @@ The following information is needed:
       "atlassianDomain": "postc-massgov",
       "atlassianApiToken": "yyyyyyyyyyyyyyyyyyyyyyyy",
       "atlassianAccountEmail":"jared@lastcallmedia.com"
-    },
+    }
   ]
 }
 ```
